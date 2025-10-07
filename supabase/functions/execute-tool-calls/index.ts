@@ -137,22 +137,28 @@ serve(async (req) => {
       return { result, error: undefined };
     };
 
-    // Helper to validate HTML structure
-    const validateHTML = (html: string): { valid: boolean; errors: string[] } => {
+    // Helper to validate HTML fragment (should NOT contain wrapper tags)
+    const validateHTMLFragment = (html: string): { valid: boolean; errors: string[] } => {
       const errors: string[] = [];
       
-      // Check for basic HTML structure
-      if (!html.includes('<!DOCTYPE html>')) {
-        errors.push('Missing DOCTYPE declaration');
+      // Check that html_code is a fragment (no wrapper tags)
+      if (html.includes('<!DOCTYPE html>')) {
+        errors.push('html_code should not contain <!DOCTYPE html> - it should be a body fragment only');
       }
-      if (!html.includes('<html')) {
-        errors.push('Missing <html> tag');
+      if (html.includes('<html')) {
+        errors.push('html_code should not contain <html> tag - it should be a body fragment only');
       }
-      if (!html.includes('<head>')) {
-        errors.push('Missing <head> tag');
+      if (html.includes('<head>')) {
+        errors.push('html_code should not contain <head> tag - it should be a body fragment only');
       }
-      if (!html.includes('<body>')) {
-        errors.push('Missing <body> tag');
+      if (html.includes('<body>')) {
+        errors.push('html_code should not contain <body> tag - it should be a body fragment only');
+      }
+      if (html.includes('<style>') || html.includes('</style>')) {
+        errors.push('html_code should not contain <style> tags - CSS should be in css_code');
+      }
+      if (html.includes('<script>') || html.includes('</script>')) {
+        errors.push('html_code should not contain <script> tags - JavaScript should be in js_code');
       }
       
       // Check for unclosed tags (simple check)
@@ -255,8 +261,17 @@ serve(async (req) => {
         
         const fp = mapFilePath(file_path);
         
-        // Validate that HTML doesn't reference external files
+        // Validate that HTML is a fragment (not a complete document)
         if (fp === 'html' && content) {
+          const validation = validateHTMLFragment(content);
+          if (!validation.valid) {
+            const errorMsg = `HTML validation failed: ${validation.errors.join(', ')}. Remember: html_code should only contain body content (no DOCTYPE, html, head, body, style, or script tags).`;
+            console.error(errorMsg);
+            actionsSummary.push(`ERROR: ${errorMsg}`);
+            throw new Error(errorMsg);
+          }
+          
+          // Check for external file references
           const externalRefs = [
             { pattern: /<script\s+src=["'](?!https?:\/\/)[^"']+\.js["']/gi, type: 'script files', example: 'game.js' },
             { pattern: /<link\s+[^>]*href=["'](?!https?:\/\/)[^"']+\.css["']/gi, type: 'CSS files', example: 'style.css' },
@@ -266,7 +281,7 @@ serve(async (req) => {
           for (const ref of externalRefs) {
             const matches = content.match(ref.pattern);
             if (matches && matches.length > 0) {
-              const errorMsg = `HTML contains references to external ${ref.type} (e.g., ${matches[0]}). All code must be inline. Use <style> tags for CSS, inline <script> tags for JS, and data URLs or generate_image for images.`;
+              const errorMsg = `HTML contains references to external ${ref.type} (e.g., ${matches[0]}). Use data URLs or generate_image for images.`;
               console.error(errorMsg);
               actionsSummary.push(`ERROR: ${errorMsg}`);
               throw new Error(errorMsg);
@@ -274,10 +289,26 @@ serve(async (req) => {
           }
         }
         
+        // Validate CSS doesn't contain <style> tags
+        if (fp === 'css' && content && (content.includes('<style>') || content.includes('</style>'))) {
+          const errorMsg = 'css_code should only contain CSS rules, not <style> tags.';
+          console.error(errorMsg);
+          actionsSummary.push(`ERROR: ${errorMsg}`);
+          throw new Error(errorMsg);
+        }
+        
+        // Validate JS doesn't contain <script> tags
+        if (fp === 'js' && content && (content.includes('<script>') || content.includes('</script>'))) {
+          const errorMsg = 'js_code should only contain JavaScript code, not <script> tags.';
+          console.error(errorMsg);
+          actionsSummary.push(`ERROR: ${errorMsg}`);
+          throw new Error(errorMsg);
+        }
+        
         if (fp === 'html') html_code = content;
         if (fp === 'css') css_code = content;
         if (fp === 'js') js_code = content;
-        actionsSummary.push(`Wrote content to ${fp}.`);
+        actionsSummary.push(`Wrote ${fp} fragment.`);
         
       } else if (toolCall.tool_name === 'replace_lines') {
         const { file_path, start_line, end_line, content } = (params || {}) as any;
@@ -300,11 +331,11 @@ serve(async (req) => {
           }
           html_code = replaceResult.result;
           
-          // Validate HTML after modification
-          const validation = validateHTML(html_code);
+          // Validate HTML fragment after modification
+          const validation = validateHTMLFragment(html_code);
           if (!validation.valid) {
-            console.error('HTML validation failed:', validation.errors);
-            actionsSummary.push(`WARNING: HTML validation failed after line replacement: ${validation.errors.join(', ')}`);
+            console.error('HTML fragment validation failed:', validation.errors);
+            actionsSummary.push(`WARNING: HTML fragment validation failed after line replacement: ${validation.errors.join(', ')}`);
             // Rollback HTML
             html_code = backup_html;
             actionsSummary.push('Rolled back HTML to previous version due to validation failure');

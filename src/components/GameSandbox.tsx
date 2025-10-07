@@ -15,42 +15,34 @@ export default function GameSandbox({ htmlCode, cssCode, jsCode, onError }: Game
   const constructedHtml = useMemo(() => {
     if (!htmlCode) return "";
 
-    // Validate HTML structure before rendering
-    const validateStructure = (html: string): string[] => {
+    // Validate that htmlCode is a fragment (not a complete HTML document)
+    const validateFragment = (html: string): string[] => {
       const errors: string[] = [];
       
-      // Check for basic required elements
-      if (!html.includes('<!DOCTYPE html>') && !html.includes('<html')) {
-        errors.push('STRUCTURAL: Missing HTML document structure');
+      // Check that html_code doesn't contain wrapper tags
+      if (html.includes('<!DOCTYPE html>')) {
+        errors.push('FRAGMENT ERROR: html_code should not contain <!DOCTYPE html>');
       }
-      
-      // Check for unclosed tags
-      const divOpen = (html.match(/<div[^>]*>/g) || []).length;
-      const divClose = (html.match(/<\/div>/g) || []).length;
-      if (divOpen !== divClose) {
-        errors.push(`STRUCTURAL: Unclosed div tags (${divOpen} open, ${divClose} close)`);
+      if (html.includes('<html')) {
+        errors.push('FRAGMENT ERROR: html_code should not contain <html> tag');
       }
-      
-      // Check for style tag placement
-      if (html.includes('<style>') && html.indexOf('<style>') > html.indexOf('<body>')) {
-        errors.push('STRUCTURAL: <style> tag found in body instead of head');
+      if (html.includes('<head>')) {
+        errors.push('FRAGMENT ERROR: html_code should not contain <head> tag');
       }
-      
-      // Check for script tag placement
-      const scriptInHead = html.indexOf('<script>') < html.indexOf('</head>');
-      if (scriptInHead) {
-        errors.push('WARNING: <script> tag in head may cause issues');
+      if (html.includes('<body>')) {
+        errors.push('FRAGMENT ERROR: html_code should not contain <body> tag');
       }
       
       return errors;
     };
 
-    const structuralErrors = validateStructure(htmlCode);
-    if (structuralErrors.length > 0 && onError) {
-      structuralErrors.forEach(error => onError(error));
+    const fragmentErrors = validateFragment(htmlCode);
+    if (fragmentErrors.length > 0 && onError) {
+      fragmentErrors.forEach(error => onError(error));
     }
 
-    return `<!DOCTYPE html>
+    // Assemble complete HTML from fragments
+    const assembledHtml = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
@@ -111,6 +103,37 @@ export default function GameSandbox({ htmlCode, cssCode, jsCode, onError }: Game
   </script>
 </body>
 </html>`;
+
+    // Validate assembled HTML structure
+    const validateAssembledHTML = (html: string): string[] => {
+      const errors: string[] = [];
+      
+      // Check for unclosed tags
+      const divOpen = (html.match(/<div[^>]*>/g) || []).length;
+      const divClose = (html.match(/<\/div>/g) || []).length;
+      if (divOpen !== divClose) {
+        errors.push(`ASSEMBLED HTML: Unclosed div tags (${divOpen} open, ${divClose} close)`);
+      }
+      
+      // Check for multiple script tags in body (should only be our wrapper script)
+      const bodyMatch = html.match(/<body>([\s\S]*)<\/body>/);
+      if (bodyMatch) {
+        const bodyContent = bodyMatch[1];
+        const scriptTagsInBody = (bodyContent.match(/<script[^>]*>/g) || []).length;
+        if (scriptTagsInBody > 1) {
+          errors.push(`ASSEMBLED HTML: Multiple script tags detected in body`);
+        }
+      }
+      
+      return errors;
+    };
+
+    const assembledErrors = validateAssembledHTML(assembledHtml);
+    if (assembledErrors.length > 0 && onError) {
+      assembledErrors.forEach(error => onError(error));
+    }
+
+    return assembledHtml;
   }, [htmlCode, cssCode, jsCode, onError]);
 
   useEffect(() => {
@@ -144,7 +167,7 @@ export default function GameSandbox({ htmlCode, cssCode, jsCode, onError }: Game
         <iframe
           ref={iframeRef}
           srcDoc={constructedHtml}
-          sandbox="allow-scripts allow-forms allow-pointer-lock allow-same-origin allow-popups allow-modals"
+          sandbox="allow-scripts allow-forms allow-pointer-lock allow-popups allow-modals"
           className="w-full h-full border-0 rounded-lg"
           title="Game Sandbox"
         />
