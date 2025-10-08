@@ -1,11 +1,19 @@
-import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { corsHeaders } from '../_shared/cors.ts';
-import { decode } from 'https://deno.land/std@0.177.0/encoding/base64.ts';
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { decode } from "jsr:@std/encoding@1/base64";
 
-serve(async (req) => {
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Client-Info, Apikey',
+};
+
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response(null, {
+      status: 200,
+      headers: corsHeaders,
+    });
   }
 
   try {
@@ -26,7 +34,6 @@ serve(async (req) => {
     
     const { sessionId, toolCalls } = body;
     
-    // Validate inputs
     if (!sessionId) {
       return new Response(
         JSON.stringify({ error: 'Missing required field: sessionId' }),
@@ -43,6 +50,7 @@ serve(async (req) => {
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
       );
     }
+    
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -52,7 +60,6 @@ serve(async (req) => {
     console.log('Number of tool calls:', toolCalls.length);
     console.log('Tool calls:', JSON.stringify(toolCalls, null, 2));
 
-    // Helper to generate and store image
     const generateAndStoreImage = async (sessionId: string, name: string, prompt: string): Promise<string> => {
       console.log(`Generating image: ${name} with prompt: ${prompt}`);
 
@@ -107,12 +114,10 @@ serve(async (req) => {
       return publicUrlData.publicUrl;
     };
 
-    // Helper to replace lines in code content with validation
     const replaceLines = (code: string, start: number, end: number, newContent: string, filePath: string): { result: string; error?: string } => {
       const lines = code.split('\n');
       const totalLines = lines.length;
       
-      // Validate line numbers
       if (start < 1 || end < 1) {
         return { result: code, error: `Invalid line numbers: start=${start}, end=${end}. Line numbers must be >= 1.` };
       }
@@ -123,13 +128,11 @@ serve(async (req) => {
         return { result: code, error: `Invalid range: start (${start}) is greater than end (${end}).` };
       }
       
-      // Log what we're replacing for debugging
       const originalLines = lines.slice(start - 1, end);
       console.log(`Replacing lines ${start}-${end} in ${filePath}:`);
       console.log('Original content (first 100 chars):', originalLines.join('\n').substring(0, 100));
       console.log('New content (first 100 chars):', newContent.substring(0, 100));
       
-      // Perform replacement
       const newLines = newContent.split('\n');
       lines.splice(start - 1, end - start + 1, ...newLines);
       const result = lines.join('\n');
@@ -137,7 +140,6 @@ serve(async (req) => {
       return { result, error: undefined };
     };
     
-    // Fetch current code and assets
     let { data: session, error } = await supabase
       .from('game_sessions')
       .select('html_code, css_code, js_code, asset_urls, chat_history')
@@ -151,7 +153,6 @@ serve(async (req) => {
     const imageUrlMap = new Map<string, string>();
     const actionsSummary: string[] = [];
 
-    // STAGE 1: Process image generation calls
     const imageGenerationCalls = toolCalls.filter((call: any) => call.tool_name === 'generate_image');
     for (const toolCall of imageGenerationCalls) {
       const params = toolCall.parameters ?? toolCall.params ?? toolCall.arguments ?? toolCall.args;
@@ -175,7 +176,6 @@ serve(async (req) => {
       }
     }
 
-    // STAGE 2: Process code modification calls
     const codeModificationCalls = toolCalls.filter((call: any) => call.tool_name !== 'generate_image');
     for (const toolCall of codeModificationCalls) {
       const params = toolCall.parameters ?? toolCall.params ?? toolCall.arguments ?? toolCall.args;
@@ -225,7 +225,6 @@ serve(async (req) => {
       }
     }
 
-    // STAGE 3: Replace image name placeholders with final URLs in all code
     if (imageUrlMap.size > 0) {
       for (const [name, url] of imageUrlMap.entries()) {
         const placeholder = new RegExp(`['"]${name}(\\.png)?['"]`, 'g');
@@ -236,9 +235,8 @@ serve(async (req) => {
       actionsSummary.push(`Replaced ${imageUrlMap.size} image placeholders with generated URLs.`);
     }
 
-    // Generate chat_response using summarizer
     console.log('Generating chat response summary');
-    let assistantChatResponse = 'I\'ve updated your game with the requested changes.';
+    let assistantChatResponse = "I've updated your game with the requested changes.";
     
     try {
       const summarizeResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
@@ -251,12 +249,7 @@ serve(async (req) => {
           model: 'google/gemini-2.5-flash',
           messages: [{
             role: 'system',
-            content: `You are a helpful assistant. Given a summary of actions taken by a tool-using AI, write a brief, friendly chat response for the user explaining what was just done. Do not mention "tools" or "AI actions," just describe the changes made to the game from the user's perspective.
-
-## Actions Taken:
-${JSON.stringify(actionsSummary, null, 2)}
-
-Generate a concise chat response now.`
+            content: `You are a helpful assistant. Given a summary of actions taken by a tool-using AI, write a brief, friendly chat response for the user explaining what was just done. Do not mention "tools" or "AI actions," just describe the changes made to the game from the user's perspective.\n\n## Actions Taken:\n${JSON.stringify(actionsSummary, null, 2)}\n\nGenerate a concise chat response now.`
           }]
         })
       });
@@ -273,7 +266,6 @@ Generate a concise chat response now.`
 
     console.log('Updating database with changes');
 
-    // Commit all changes to database
     const { error: updateError } = await supabase
       .from('game_sessions')
       .update({

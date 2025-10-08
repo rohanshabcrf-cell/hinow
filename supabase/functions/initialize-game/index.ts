@@ -1,10 +1,18 @@
-import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { corsHeaders } from '../_shared/cors.ts';
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
-serve(async (req) => {
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Client-Info, Apikey',
+};
+
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response(null, {
+      status: 200,
+      headers: corsHeaders,
+    });
   }
 
   try {
@@ -28,7 +36,6 @@ serve(async (req) => {
 
     console.log('Environment check passed');
 
-    // Call AI Model to get game_plan
     console.log('Calling Lovable AI Gateway...');
     const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
@@ -40,41 +47,7 @@ serve(async (req) => {
         model: 'google/gemini-2.5-pro',
         messages: [{
           role: 'system',
-          content: `You are a world-class game architect AI. A user will provide you with a game concept. Your task is to transform their idea into a comprehensive and ambitious technical game plan. Do not think about a "minimal viable product"; instead, plan a feature-rich, engaging, and visually impressive game.
-
-Your response MUST be a valid JSON object wrapped in a \`\`\`json code block with the following structure:
-{
-  "game_title": "A creative and fitting title for the game.",
-  "game_concept": "A one-paragraph summary of the core game idea, including genre, objective, and unique mechanics.",
-  "technical_stack": {
-    "renderer": "Choose between '2D Canvas API' for 2D games or 'Three.js' for 3D games.",
-    "libraries": [
-      "List any recommended helper libraries, e.g., GSAP for animations."
-    ]
-  },
-  "core_features": [
-    "List at least 5-7 key gameplay features that would make a complete game.",
-    "Detailed player character controls (e.g., movement, jumping, shooting).",
-    "Multiple enemy types with distinct behaviors (e.g., pathfinding, ranged attacks).",
-    "Interactive environments with physics-based objects or destructible terrain.",
-    "A progressive level system with increasing difficulty.",
-    "Scoring, health, and power-up systems.",
-    "Engaging UI/HUD elements (e.g., health bar, ammo count, mini-map).",
-    "Sound effects and background music hooks."
-  ],
-  "asset_plan": [
-    "List all necessary visual assets. Be descriptive.",
-    "player_sprite_sheet (idle, run, jump animations)",
-    "enemy_type_A_sprite (attack, death animations)",
-    "projectile_asset.png",
-    "environment_tileset.png",
-    "ui_health_bar_full.png",
-    "ui_health_bar_empty.png",
-    "game_background_layer_1.png"
-  ],
-  "initial_task": "A clear, concise instruction for the next AI agent to begin the first and most critical step of development. Example: 'Set up the initial HTML, CSS, and JS files. Implement the core player character using a placeholder graphic and add keyboard controls for movement (left/right arrows) and jumping (spacebar) within a basic requestAnimationFrame game loop.'",
-  "chat_response": "Friendly, encouraging message explaining the ambitious game concept and what will be built first"
-}`
+          content: `You are a world-class game architect AI. A user will provide you with a game concept. Your task is to transform their idea into a comprehensive and ambitious technical game plan. Do not think about a "minimal viable product"; instead, plan a feature-rich, engaging, and visually impressive game.\n\nYour response MUST be a valid JSON object wrapped in a \`\`\`json code block with the following structure:\n{\n  "game_title": "A creative and fitting title for the game.",\n  "game_concept": "A one-paragraph summary of the core game idea, including genre, objective, and unique mechanics.",\n  "technical_stack": {\n    "renderer": "Choose between '2D Canvas API' for 2D games or 'Three.js' for 3D games.",\n    "libraries": [\n      "List any recommended helper libraries, e.g., GSAP for animations."\n    ]\n  },\n  "core_features": [\n    "List at least 5-7 key gameplay features that would make a complete game.",\n    "Detailed player character controls (e.g., movement, jumping, shooting).",\n    "Multiple enemy types with distinct behaviors (e.g., pathfinding, ranged attacks).",\n    "Interactive environments with physics-based objects or destructible terrain.",\n    "A progressive level system with increasing difficulty.",\n    "Scoring, health, and power-up systems.",\n    "Engaging UI/HUD elements (e.g., health bar, ammo count, mini-map).",\n    "Sound effects and background music hooks."\n  ],\n  "asset_plan": [\n    "List all necessary visual assets. Be descriptive.",\n    "player_sprite_sheet (idle, run, jump animations)",\n    "enemy_type_A_sprite (attack, death animations)",\n    "projectile_asset.png",\n    "environment_tileset.png",\n    "ui_health_bar_full.png",\n    "ui_health_bar_empty.png",\n    "game_background_layer_1.png"\n  ],\n  "initial_task": "A clear, concise instruction for the next AI agent to begin the first and most critical step of development. Example: 'Set up the initial HTML, CSS, and JS files. Implement the core player character using a placeholder graphic and add keyboard controls for movement (left/right arrows) and jumping (spacebar) within a basic requestAnimationFrame game loop.'",\n  "chat_response": "Friendly, encouraging message explaining the ambitious game concept and what will be built first"\n}`
         }, {
           role: 'user',
           content: userPrompt
