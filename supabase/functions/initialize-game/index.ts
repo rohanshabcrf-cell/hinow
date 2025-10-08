@@ -9,21 +9,21 @@ serve(async (req) => {
 
   try {
     const { userPrompt, sessionId } = await req.json();
-    
+
     console.log('Initializing game with prompt:', userPrompt);
     console.log('Session ID:', sessionId);
-    
+
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
-    
+
     if (!supabaseUrl || !supabaseKey) {
       throw new Error('Missing Supabase credentials');
     }
     if (!lovableApiKey) {
       throw new Error('Missing LOVABLE_API_KEY');
     }
-    
+
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     console.log('Environment check passed');
@@ -87,7 +87,7 @@ Your response MUST be a valid JSON object wrapped in a \`\`\`json code block wit
       console.error('AI Gateway error:', aiResponse.status, errorText);
       throw new Error(`AI Gateway returned ${aiResponse.status}: ${errorText}`);
     }
-    
+
     const aiData = await aiResponse.json();
     console.log('AI response received, parsing...');
 
@@ -97,7 +97,7 @@ Your response MUST be a valid JSON object wrapped in a \`\`\`json code block wit
       throw new Error('AI response missing content');
     }
     const gamePlanString = responseContent.match(/```json\n([\s\S]*?)\n```/)?.[1];
-    
+
     if (!gamePlanString) {
       throw new Error('Failed to extract game plan from AI response');
     }
@@ -109,14 +109,14 @@ Your response MUST be a valid JSON object wrapped in a \`\`\`json code block wit
     if (sessionId) {
       const { data, error } = await supabase
         .from('game_sessions')
-        .update({ 
-          game_plan: gamePlan, 
-          status: 'planning_complete', 
-          user_prompt: userPrompt, 
+        .update({
+          game_plan: gamePlan,
+          status: 'planning_complete',
+          user_prompt: userPrompt,
           chat_history: [
-            {role: 'user', content: userPrompt}, 
+            {role: 'user', content: userPrompt},
             {role: 'assistant', content: gamePlan.chat_response}
-          ] 
+          ]
         })
         .eq('id', sessionId)
         .select()
@@ -126,14 +126,14 @@ Your response MUST be a valid JSON object wrapped in a \`\`\`json code block wit
     } else {
       const { data, error } = await supabase
         .from('game_sessions')
-        .insert({ 
-          game_plan: gamePlan, 
-          status: 'planning_complete', 
-          user_prompt: userPrompt, 
+        .insert({
+          game_plan: gamePlan,
+          status: 'planning_complete',
+          user_prompt: userPrompt,
           chat_history: [
-            {role: 'user', content: userPrompt}, 
+            {role: 'user', content: userPrompt},
             {role: 'assistant', content: gamePlan.chat_response}
-          ] 
+          ]
         })
         .select()
         .single();

@@ -24,76 +24,9 @@ serve(async (req) => {
 
     if (error) throw error;
 
-    // Helper to analyze HTML structure and extract line numbers
-    const analyzeHTMLStructure = (html: string): string => {
-      if (!html) return 'No HTML code present';
-      
-      const lines = html.split('\n');
-      const structure: string[] = ['HTML Structure with Line Numbers:'];
-      
-      let inHead = false;
-      let inBody = false;
-      let inScript = false;
-      let inStyle = false;
-      let divDepth = 0;
-      
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-        const lineNum = i + 1;
-        
-        // Track major sections
-        if (line.includes('<head>')) {
-          inHead = true;
-          structure.push(`  Line ${lineNum}: <head> section starts`);
-        } else if (line.includes('</head>')) {
-          inHead = false;
-          structure.push(`  Line ${lineNum}: <head> section ends`);
-        } else if (line.includes('<body>')) {
-          inBody = true;
-          structure.push(`  Line ${lineNum}: <body> section starts`);
-        } else if (line.includes('</body>')) {
-          inBody = false;
-          structure.push(`  Line ${lineNum}: <body> section ends`);
-        } else if (line.includes('<style>')) {
-          inStyle = true;
-          structure.push(`  Line ${lineNum}: <style> block starts`);
-        } else if (line.includes('</style>')) {
-          inStyle = false;
-          structure.push(`  Line ${lineNum}: <style> block ends`);
-        } else if (line.includes('<script>')) {
-          inScript = true;
-          structure.push(`  Line ${lineNum}: <script> block starts`);
-        } else if (line.includes('</script>')) {
-          inScript = false;
-          structure.push(`  Line ${lineNum}: <script> block ends`);
-        }
-        
-        // Track divs with IDs or classes
-        const divMatch = line.match(/<div[^>]*id=["']([^"']+)["'][^>]*>/);
-        const divClassMatch = line.match(/<div[^>]*class=["']([^"']+)["'][^>]*>/);
-        
-        if (divMatch) {
-          divDepth++;
-          structure.push(`  Line ${lineNum}: <div id="${divMatch[1]}"> (depth ${divDepth})`);
-        } else if (divClassMatch) {
-          divDepth++;
-          structure.push(`  Line ${lineNum}: <div class="${divClassMatch[1]}"> (depth ${divDepth})`);
-        } else if (line === '</div>' || line.startsWith('</div>')) {
-          structure.push(`  Line ${lineNum}: </div> closes (depth ${divDepth})`);
-          divDepth = Math.max(0, divDepth - 1);
-        }
-      }
-      
-      structure.push(`\nTotal lines: ${lines.length}`);
-      return structure.join('\n');
-    };
-    
-    const htmlStructure = analyzeHTMLStructure(session.html_code || '');
-
-    // Prepare sessionState for the AI - INCLUDING ERROR LOG AND FILE STRUCTURE
+    // Prepare sessionState for the AI - Simplified for clarity and focus
     const sessionState = {
       game_plan: session.game_plan,
-      html_structure: htmlStructure, // NEW: Provide structured view
       html_code: session.html_code,
       css_code: session.css_code,
       js_code: session.js_code,
@@ -118,141 +51,48 @@ serve(async (req) => {
         model: 'google/gemini-2.5-pro',
         messages: [{
           role: 'system',
-          content: `You are GameSpark, an expert AI game development assistant. Your primary function is to analyze the user's request, the comprehensive game plan, the current code state, and any existing errors. Your goal is to generate a series of precise operations to build or modify a feature-rich HTML5 game.
+          content: `You are GameSpark, an elite AI game developer. Your purpose is to execute the high-level "game_plan" by writing and modifying code. You operate in a loop: you receive the current state (code, plan, errors), and you output a precise set of operations to advance the project.
 
-**CRITICAL ARCHITECTURE RULES:**
-1. **GENERATE FRAGMENTS ONLY:** You generate THREE separate code fragments:
-   - html_code: Contains ONLY the body content (NO <!DOCTYPE>, <html>, <head>, <body>, <style>, or <script> tags)
-   - css_code: Contains ONLY CSS rules (NO <style> tags)
-   - js_code: Contains ONLY JavaScript code (NO <script> tags)
-   The GameSandbox component will assemble these fragments into a complete HTML document.
+**Prime Directive: Write functional, feature-complete code.** Adhere to the ambitious vision of the game_plan.
 
-2. **NO EXTERNAL FILE REFERENCES:** The game runs in a sandboxed iframe with no file system access. NEVER reference external .js, .css, or image files. Use data URLs for images or generate them with the generate_image tool.
+**Core Workflow:**
+1.  **Analyze State:** First, review the entire session state. Pay special attention to the \`error_log\`.
+2.  **Prioritize Debugging:** If an \`error_log\` exists, your ONLY goal is to fix it. Form a clear hypothesis about the cause and devise a plan to resolve it. Do not add or change features until the bug is fixed.
+3.  **Execute the Plan:** If there are no errors, read the \`user_prompt\` and the \`game_plan\` to determine the next logical feature to build.
+4.  **Reason and Respond:** Formulate your response in the required JSON format, detailing your thought process, a step-by-step plan, and the exact operations needed.
 
-3. **DEBUG FIRST:** If the \`error_log\` is present, your #1 priority is to analyze and fix the bug. Do not add new features until the error is resolved.
+**Code Generation Rules:**
+-   **You control three codebases:** \`html_code\`, \`css_code\`, and \`js_code\`.
+-   **HTML is Body-Only:** The \`html_code\` field must ONLY contain the content that goes inside the \`<body>\` tag. Never include \`<html>\`, \`<head>\`, \`<body>\`, or full document boilerplate. The host environment provides that. For 3D games, however, you MUST include the necessary Three.js \`<script>\` tags within this body content.
+-   **CSS is Rules-Only:** The \`css_code\` field must ONLY contain CSS rules. Never include \`<style>\` tags.
+-   **JS is Code-Only:** The \`js_code\` field must ONLY contain JavaScript. Never include \`<script>\` tags.
+-   **Image Assets:** To use images, you MUST call the \`generate_image\` tool. The system will automatically provide you with a URL. Reference this image in your code using its name (e.g., 'player_ship.png'). The execution environment will automatically replace this name with the correct URL.
 
-4. **AMBITION OVER SIMPLICITY:** Build towards the complete vision in the \`game_plan\`. Implement features fully and robustly.
+**Quality Standards:**
+-   **Architecture:** Use modern JavaScript (ES6 Classes) for game objects. Separate game logic (\`update\` function) from rendering logic (\`draw\` function).
+-   **Performance:** Always use \`requestAnimationFrame\` for the main game loop.
+-   **3D Games (Three.js):** When the plan requires Three.js, create a Scene, Camera, and WebGLRenderer. Use \`PointerLockControls\` for FPS games. Add lighting. Your game loop must call \`renderer.render(scene, camera)\`.
 
-5. **QUALITY CODE:** All JavaScript game logic MUST use \`requestAnimationFrame\` for the game loop. State management (player position, score) MUST be separated from rendering logic (drawing on the canvas/scene).
-
-**TECHNICAL GUIDANCE:**
-* **2D Canvas:** Utilize object-oriented patterns (e.g., Player and Enemy classes) to manage game entities. Encapsulate position, velocity, and rendering within these classes.
-* **3D (Three.js):** When building 3D games, follow these best practices:
-    * **Setup:** Create a \`Scene\`, a \`Camera\` (usually \`PerspectiveCamera\`), and a \`WebGLRenderer\`.
-    * **Controls:** For first-person games, implement \`PointerLockControls\` for an immersive experience.
-    * **Lighting:** Add appropriate lighting to the scene, such as \`AmbientLight\` for general illumination and \`DirectionalLight\` for shadows.
-    * **Game Loop:** The \`requestAnimationFrame\` loop is still essential. Inside it, you will call \`renderer.render(scene, camera)\`.
-
-**REQUIRED RESPONSE FORMAT:**
-You MUST respond with a valid JSON object containing "thought", "plan", and "operations".
-
-**YOUR STEP-BY-STEP PROCESS:**
+**Required JSON Response Format:** You MUST respond with a valid JSON object containing "thought", "plan", and "operations".
 
 **1. Thought:**
-- If \`error_log\` exists, state your hypothesis for the root cause.
-- Analyze the \`game_plan\`, \`user_prompt\`, and current code.
-- Remember: You're generating FRAGMENTS, not complete HTML documents.
+   - A concise analysis of the current situation. If debugging, state your hypothesis. If building, state the feature you are implementing.
+   - Example (Bug): "The error 'player is not defined' in the console log indicates an initialization or scope issue. The player object is likely being used before it's assigned."
+   - Example (Feature): "The game plan calls for enemy behavior. I will now create a base Enemy class and add logic to spawn one instance."
 
 **2. Plan:**
-- Create a concise, numbered list of the specific actions you will take.
-- Example: "1. Generate canvas game loop in js_code. 2. Add player rendering in html_code. 3. Style the canvas in css_code."
+   - A numbered list of the specific, small steps you will take to achieve the goal.
+   - Example (Bug): "1. Find the line where 'player' is first used. 2. Ensure the 'const player = new Player()' declaration happens before that line and is in the global scope. 3. I will use 'replace_lines' to move the declaration."
+   - Example (Feature): "1. Use 'write_file' to create the initial content for js_code, defining the Enemy class. 2. Add logic to the main game loop to create and draw an enemy instance."
 
 **3. Operations:**
-- Based on your plan, generate an array of tool calls (\`write_file\`, \`generate_image\`).
-- Each operation should be a JSON object with "tool_name" and "parameters" fields.
-
-**EXAMPLE RESPONSE FORMAT FOR FRAGMENTS:**
-\`\`\`json
-{
-  "thought": "The game plan calls for a complete player character with movement controls. I will generate the body content, CSS rules, and JavaScript game logic as separate fragments.",
-  "plan": [
-    "1. Generate html_code with canvas element and game UI (body content only)",
-    "2. Generate css_code with styling rules for the canvas and UI",
-    "3. Generate js_code with Player class, keyboard controls, and game loop"
-  ],
-  "operations": [
-    {
-      "tool_name": "write_file",
-      "parameters": {
-        "file_path": "html_code",
-        "content": "<canvas id=\\"gameCanvas\\"></canvas>\\n<div id=\\"score\\">Score: 0</div>"
-      }
-    },
-    {
-      "tool_name": "write_file",
-      "parameters": {
-        "file_path": "css_code",
-        "content": "body { margin: 0; background: #000; }\\ncanvas { display: block; }\\n#score { color: white; position: absolute; top: 10px; left: 10px; }"
-      }
-    },
-    {
-      "tool_name": "write_file",
-      "parameters": {
-        "file_path": "js_code",
-        "content": "const canvas = document.getElementById('gameCanvas');\\nconst ctx = canvas.getContext('2d');\\ncanvas.width = 800;\\ncanvas.height = 600;\\n\\nclass Player {\\n  constructor(x, y) {\\n    this.x = x;\\n    this.y = y;\\n  }\\n  draw() {\\n    ctx.fillStyle = '#0f0';\\n    ctx.fillRect(this.x, this.y, 50, 50);\\n  }\\n}\\n\\nconst player = new Player(100, 100);\\n\\nfunction gameLoop() {\\n  ctx.clearRect(0, 0, canvas.width, canvas.height);\\n  player.draw();\\n  requestAnimationFrame(gameLoop);\\n}\\ngameLoop();"
-      }
-    }
-  ]
-}
-\`\`\`
-
-**Available Tools:**
-- write_file: Write code fragments. CRITICAL: file_path MUST be exactly "html_code", "css_code", or "js_code"
-- generate_image: Create images as data URLs (name, prompt) - images will be returned as base64 data URLs to embed directly
-
-**CRITICAL FRAGMENT RULES:**
-1. html_code: ONLY body content (NO <!DOCTYPE>, <html>, <head>, <body>, <style>, or <script> tags)
-2. css_code: ONLY CSS rules (NO <style> tags)
-3. js_code: ONLY JavaScript code (NO <script> tags)
-4. For 3D games, include script tags for Three.js CDN in html_code
-5. Images must use data URLs or be generated with generate_image tool
-
-**EXAMPLE WRONG vs RIGHT:**
-❌ WRONG html_code:
-\`\`\`
-<!DOCTYPE html>
-<html>
-<head><style>body{margin:0}</style></head>
-<body><canvas id="game"></canvas></body>
-</html>
-\`\`\`
-
-✅ RIGHT html_code:
-\`\`\`
-<canvas id="gameCanvas"></canvas>
-<div id="ui">Score: 0</div>
-\`\`\`
-
-❌ WRONG css_code:
-\`\`\`
-<style>
-body { margin: 0; }
-</style>
-\`\`\`
-
-✅ RIGHT css_code:
-\`\`\`
-body { margin: 0; background: #000; }
-canvas { display: block; }
-\`\`\`
-
-❌ WRONG js_code:
-\`\`\`
-<script>
-const canvas = document.getElementById('game');
-</script>
-\`\`\`
-
-✅ RIGHT js_code:
-\`\`\`
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-\`\`\`
+   - An array of tool calls to execute your plan. The only valid tools are \`write_file\` and \`generate_image\`.
+   - The \`file_path\` for \`write_file\` MUST be one of: "html_code", "css_code", or "js_code".
 
 ## SESSION STATE
 ${JSON.stringify(sessionState, null, 2)}
 
-Generate your response now as a valid JSON object with "thought", "plan", and "operations" fields.`
+Generate your response now.`
         }, ...updatedChatHistory.map(msg => ({ role: msg.role, content: msg.content }))]
       })
     });
@@ -366,14 +206,14 @@ Generate your response now as a valid JSON object with "thought", "plan", and "o
     // Update chat history with planning response
     await supabase
       .from('game_sessions')
-      .update({ 
+      .update({
         chat_history: [...updatedChatHistory, { role: 'assistant', content: chatResponse }],
         status: 'orchestrating'
       })
       .eq('id', sessionId);
 
     return new Response(
-      JSON.stringify({ 
+      JSON.stringify({
         toolCalls: operations, // Pass the operations array as toolCalls for compatibility
         chatResponse,
         thought, // Include thought and plan for potential frontend display
@@ -407,8 +247,8 @@ Generate your response now as a valid JSON object with "thought", "plan", and "o
     }
     
     return new Response(
-      JSON.stringify({ 
-        error: errorMessage, 
+      JSON.stringify({
+        error: errorMessage,
         details: error.message,
         debug: debugInfo,
         timestamp: new Date().toISOString()

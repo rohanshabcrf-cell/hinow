@@ -16,7 +16,7 @@ serve(async (req) => {
       console.error('execute-tool-calls: Invalid or empty JSON body');
       console.error('JSON parse error:', jsonError.message);
       return new Response(
-        JSON.stringify({ 
+        JSON.stringify({
           error: 'Invalid JSON in request body',
           details: jsonError.message
         }),
@@ -36,7 +36,7 @@ serve(async (req) => {
     
     if (!toolCalls || !Array.isArray(toolCalls)) {
       return new Response(
-        JSON.stringify({ 
+        JSON.stringify({
           error: 'Invalid toolCalls: must be an array',
           received: typeof toolCalls
         }),
@@ -136,43 +136,7 @@ serve(async (req) => {
       
       return { result, error: undefined };
     };
-
-    // Helper to validate HTML fragment (should NOT contain wrapper tags)
-    const validateHTMLFragment = (html: string): { valid: boolean; errors: string[] } => {
-      const errors: string[] = [];
-      
-      // Check that html_code is a fragment (no wrapper tags)
-      if (html.includes('<!DOCTYPE html>')) {
-        errors.push('html_code should not contain <!DOCTYPE html> - it should be a body fragment only');
-      }
-      if (html.includes('<html')) {
-        errors.push('html_code should not contain <html> tag - it should be a body fragment only');
-      }
-      if (html.includes('<head>')) {
-        errors.push('html_code should not contain <head> tag - it should be a body fragment only');
-      }
-      if (html.includes('<body>')) {
-        errors.push('html_code should not contain <body> tag - it should be a body fragment only');
-      }
-      if (html.includes('<style>') || html.includes('</style>')) {
-        errors.push('html_code should not contain <style> tags - CSS should be in css_code');
-      }
-      if (html.includes('<script>') || html.includes('</script>')) {
-        errors.push('html_code should not contain <script> tags - JavaScript should be in js_code');
-      }
-      
-      // Check for unclosed tags (simple check)
-      const openTags = (html.match(/<(?!\/|!)[a-z][a-z0-9]*[^>]*>/gi) || []).length;
-      const closeTags = (html.match(/<\/[a-z][a-z0-9]*>/gi) || []).length;
-      const selfClosingTags = (html.match(/<[a-z][a-z0-9]*[^>]*\/>/gi) || []).length;
-      
-      if (openTags - selfClosingTags !== closeTags) {
-        errors.push(`Possible unclosed tags: ${openTags - selfClosingTags} open tags vs ${closeTags} close tags`);
-      }
-      
-      return { valid: errors.length === 0, errors };
-    };
-
+    
     // Fetch current code and assets
     let { data: session, error } = await supabase
       .from('game_sessions')
@@ -184,10 +148,6 @@ serve(async (req) => {
 
     let { html_code, css_code, js_code, asset_urls, chat_history } = session;
     
-    // Store backups for potential rollback
-    const backup_html = html_code;
-    const backup_css = css_code;
-    const backup_js = js_code;
     const imageUrlMap = new Map<string, string>();
     const actionsSummary: string[] = [];
 
@@ -208,166 +168,72 @@ serve(async (req) => {
         if (!asset_urls.includes(publicUrl)) {
           asset_urls.push(publicUrl);
         }
-        actionsSummary.push(`Generated image '${name}' at ${publicUrl}`);
+        actionsSummary.push(`Generated image '${name}'`);
       } catch (imgError: any) {
         console.error(`Failed to generate image ${name}:`, imgError.message);
         actionsSummary.push(`Failed to generate image '${name}': ${imgError.message}`);
       }
     }
 
-    // STAGE 2: Replace image placeholders in all code (HTML, CSS, JS)
-    if (imageUrlMap.size > 0) {
-      for (const [name, url] of imageUrlMap.entries()) {
-        // Handle multiple placeholder patterns:
-        // 1. {{name}} - curly brace placeholders
-        // 2. name.png - file extension format
-        // 3. 'name' or "name" - quoted name
-        const patterns = [
-          new RegExp(`\\{\\{${name}\\}\\}`, 'g'),           // {{name}}
-          new RegExp(`(['"])${name}\\.png\\1`, 'g'),         // 'name.png' or "name.png"
-          new RegExp(`(['"])${name}\\1`, 'g'),               // 'name' or "name"
-        ];
-        
-        for (const pattern of patterns) {
-          if (html_code) html_code = html_code.replace(pattern, `'${url}'`);
-          if (css_code) css_code = css_code.replace(pattern, `url('${url}')`);
-          if (js_code) js_code = js_code.replace(pattern, `'${url}'`);
-        }
-      }
-      actionsSummary.push(`Replaced ${imageUrlMap.size} image placeholders in code with generated URLs.`);
-    }
-
-    // STAGE 3: Process code modification calls
+    // STAGE 2: Process code modification calls
     const codeModificationCalls = toolCalls.filter((call: any) => call.tool_name !== 'generate_image');
-    const mapFilePath = (p: string) => {
-      if (!p) return p;
-      const lp = p.toLowerCase();
-      // Handle all variations of file paths
-      if (lp === 'html' || lp === 'html_code' || lp === 'index.html') return 'html';
-      if (lp === 'css' || lp === 'css_code' || lp === 'style.css') return 'css';
-      if (lp === 'js' || lp === 'js_code' || lp === 'script.js' || lp === 'game.js') return 'js';
-      return lp;
-    };
     for (const toolCall of codeModificationCalls) {
       const params = toolCall.parameters ?? toolCall.params ?? toolCall.arguments ?? toolCall.args;
       
       if (toolCall.tool_name === 'write_file') {
         const { file_path, content } = (params || {}) as any;
-        if (!file_path || !content) {
-          console.error('write_file missing required parameters:', toolCall);
-          actionsSummary.push('Skipped write_file: missing file_path or content');
-          continue;
-        }
-        
-        const fp = mapFilePath(file_path);
-        
-        // Validate that HTML is a fragment (not a complete document)
-        if (fp === 'html' && content) {
-          const validation = validateHTMLFragment(content);
-          if (!validation.valid) {
-            const errorMsg = `HTML validation failed: ${validation.errors.join(', ')}. Remember: html_code should only contain body content (no DOCTYPE, html, head, body, style, or script tags).`;
-            console.error(errorMsg);
-            actionsSummary.push(`ERROR: ${errorMsg}`);
-            throw new Error(errorMsg);
-          }
-          
-          // Check for external file references
-          const externalRefs = [
-            { pattern: /<script\s+src=["'](?!https?:\/\/)[^"']+\.js["']/gi, type: 'script files', example: 'game.js' },
-            { pattern: /<link\s+[^>]*href=["'](?!https?:\/\/)[^"']+\.css["']/gi, type: 'CSS files', example: 'style.css' },
-            { pattern: /<img\s+[^>]*src=["'](?!https?:\/\/|data:)[^"']+\.(png|jpg|jpeg|gif|svg)["']/gi, type: 'image files', example: 'image.png' }
-          ];
-          
-          for (const ref of externalRefs) {
-            const matches = content.match(ref.pattern);
-            if (matches && matches.length > 0) {
-              const errorMsg = `HTML contains references to external ${ref.type} (e.g., ${matches[0]}). Use data URLs or generate_image for images.`;
-              console.error(errorMsg);
-              actionsSummary.push(`ERROR: ${errorMsg}`);
-              throw new Error(errorMsg);
-            }
-          }
-        }
-        
-        // Validate CSS doesn't contain <style> tags
-        if (fp === 'css' && content && (content.includes('<style>') || content.includes('</style>'))) {
-          const errorMsg = 'css_code should only contain CSS rules, not <style> tags.';
-          console.error(errorMsg);
-          actionsSummary.push(`ERROR: ${errorMsg}`);
-          throw new Error(errorMsg);
-        }
-        
-        // Validate JS doesn't contain <script> tags
-        if (fp === 'js' && content && (content.includes('<script>') || content.includes('</script>'))) {
-          const errorMsg = 'js_code should only contain JavaScript code, not <script> tags.';
-          console.error(errorMsg);
-          actionsSummary.push(`ERROR: ${errorMsg}`);
-          throw new Error(errorMsg);
-        }
-        
-        if (fp === 'html') html_code = content;
-        if (fp === 'css') css_code = content;
-        if (fp === 'js') js_code = content;
-        actionsSummary.push(`Wrote ${fp} fragment.`);
+        if (file_path === 'html_code') html_code = content;
+        if (file_path === 'css_code') css_code = content;
+        if (file_path === 'js_code') js_code = content;
+        actionsSummary.push(`Updated ${file_path}.`);
         
       } else if (toolCall.tool_name === 'replace_lines') {
         const { file_path, start_line, end_line, content } = (params || {}) as any;
-        // Allow empty content (for deletions), but all parameters must be present
-        if (!file_path || start_line === undefined || end_line === undefined || content === undefined || content === null) {
-          console.error('replace_lines missing required parameters:', toolCall);
-          actionsSummary.push('Skipped replace_lines: missing required parameters');
-          continue;
-        }
-        
-        const fp = mapFilePath(file_path);
         let replaceResult: { result: string; error?: string } | undefined;
         
-        if (fp === 'html' && html_code) {
-          replaceResult = replaceLines(html_code, start_line, end_line, content, fp);
-          if (replaceResult.error) {
-            console.error('replace_lines error:', replaceResult.error);
-            actionsSummary.push(`ERROR replacing lines in ${fp}: ${replaceResult.error}`);
-            continue; // Skip this operation
-          }
-          html_code = replaceResult.result;
-          
-          // Validate HTML fragment after modification
-          const validation = validateHTMLFragment(html_code);
-          if (!validation.valid) {
-            console.error('HTML fragment validation failed:', validation.errors);
-            actionsSummary.push(`WARNING: HTML fragment validation failed after line replacement: ${validation.errors.join(', ')}`);
-            // Rollback HTML
-            html_code = backup_html;
-            actionsSummary.push('Rolled back HTML to previous version due to validation failure');
-            continue;
-          }
+        if (file_path === 'html_code' && html_code) {
+            replaceResult = replaceLines(html_code, start_line, end_line, content, file_path);
+            if (replaceResult.error) {
+                actionsSummary.push(`ERROR replacing lines in ${file_path}: ${replaceResult.error}`);
+                continue;
+            }
+            html_code = replaceResult.result;
         }
         
-        if (fp === 'css' && css_code) {
-          replaceResult = replaceLines(css_code, start_line, end_line, content, fp);
+        if (file_path === 'css_code' && css_code) {
+          replaceResult = replaceLines(css_code, start_line, end_line, content, file_path);
           if (replaceResult.error) {
-            console.error('replace_lines error:', replaceResult.error);
-            actionsSummary.push(`ERROR replacing lines in ${fp}: ${replaceResult.error}`);
+            actionsSummary.push(`ERROR replacing lines in ${file_path}: ${replaceResult.error}`);
             continue;
           }
           css_code = replaceResult.result;
         }
         
-        if (fp === 'js' && js_code) {
-          replaceResult = replaceLines(js_code, start_line, end_line, content, fp);
+        if (file_path === 'js_code' && js_code) {
+          replaceResult = replaceLines(js_code, start_line, end_line, content, file_path);
           if (replaceResult.error) {
-            console.error('replace_lines error:', replaceResult.error);
-            actionsSummary.push(`ERROR replacing lines in ${fp}: ${replaceResult.error}`);
+            actionsSummary.push(`ERROR replacing lines in ${file_path}: ${replaceResult.error}`);
             continue;
           }
           js_code = replaceResult.result;
         }
         
-        actionsSummary.push(`Replaced lines ${start_line}-${end_line} in ${fp}.`);
+        actionsSummary.push(`Replaced lines ${start_line}-${end_line} in ${file_path}.`);
       } else {
         console.warn('Unknown tool name:', toolCall.tool_name);
         actionsSummary.push(`Skipped unknown tool: ${toolCall.tool_name}`);
       }
+    }
+
+    // STAGE 3: Replace image name placeholders with final URLs in all code
+    if (imageUrlMap.size > 0) {
+      for (const [name, url] of imageUrlMap.entries()) {
+        const placeholder = new RegExp(`['"]${name}(\\.png)?['"]`, 'g');
+        if (html_code) html_code = html_code.replace(placeholder, `'${url}'`);
+        if (css_code) css_code = css_code.replace(placeholder, `url('${url}')`);
+        if (js_code) js_code = js_code.replace(placeholder, `'${url}'`);
+      }
+      actionsSummary.push(`Replaced ${imageUrlMap.size} image placeholders with generated URLs.`);
     }
 
     // Generate chat_response using summarizer
@@ -395,21 +261,14 @@ Generate a concise chat response now.`
         })
       });
 
-      if (!summarizeResponse.ok) {
-        console.error(`Summarize API failed with status ${summarizeResponse.status}`);
-        const errorText = await summarizeResponse.text();
-        console.error('Summarize error:', errorText);
-      } else {
+      if (summarizeResponse.ok) {
         const summarizeData = await summarizeResponse.json();
         if (summarizeData.choices?.[0]?.message?.content) {
           assistantChatResponse = summarizeData.choices[0].message.content;
-        } else {
-          console.error('Invalid summarize response structure:', JSON.stringify(summarizeData));
         }
       }
     } catch (summarizeError: any) {
       console.error('Error generating summary:', summarizeError.message);
-      // Use default response if summary generation fails
     }
 
     console.log('Updating database with changes');
@@ -417,13 +276,13 @@ Generate a concise chat response now.`
     // Commit all changes to database
     const { error: updateError } = await supabase
       .from('game_sessions')
-      .update({ 
-        html_code, 
-        css_code, 
-        js_code, 
-        asset_urls, 
-        chat_history: [...chat_history, { role: 'assistant', content: assistantChatResponse }], 
-        status: 'coding_complete' 
+      .update({
+        html_code,
+        css_code,
+        js_code,
+        asset_urls,
+        chat_history: [...chat_history, { role: 'assistant', content: assistantChatResponse }],
+        status: 'coding_complete'
       })
       .eq('id', sessionId);
 
@@ -442,25 +301,8 @@ Generate a concise chat response now.`
     console.error('Error in execute-tool-calls:', error);
     console.error('Error stack:', error.stack);
     
-    // Provide detailed error information for debugging
-    let errorResponse: any = {
-      error: error.message || 'An unexpected error occurred',
-      timestamp: new Date().toISOString()
-    };
-    
-    // Add specific context based on error type
-    if (error.message?.includes('syntax')) {
-      errorResponse.hint = 'JavaScript syntax error detected. Check console logs for details.';
-    } else if (error.message?.includes('storage')) {
-      errorResponse.hint = 'File storage error. Check bucket permissions.';
-    } else if (error.message?.includes('rate limit') || error.message?.includes('429')) {
-      errorResponse.hint = 'Rate limit exceeded. Please wait before trying again.';
-    } else if (error.message?.includes('fetch')) {
-      errorResponse.hint = 'Network error occurred. Please try again.';
-    }
-    
     return new Response(
-      JSON.stringify(errorResponse),
+      JSON.stringify({ error: error.message || 'An unexpected error occurred' }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 500,
